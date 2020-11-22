@@ -1,0 +1,18 @@
+{
+  "name": "@ztzl/node-rtsp",
+  "version": "1.0.0",
+  "main": "main.js",
+  "scripts": {
+    "start": "node main.js",
+    "build": "node-gyp rebuild"
+  },
+  "keywords": [
+  ],
+  "author": "",
+  "license": "ISC",
+  "gypfile": true,
+  "description": "@ztzl/node-rtsp",
+  "dependencies": {
+   
+  }
+}
