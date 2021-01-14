@@ -151,31 +151,41 @@ public:
     ~Worker() {}
     
     static void run(Worker *context) {
+        printf("[Worker::run]\n");
+
         while (context->status) {
             context->decoder = new Decoder();
-            context->decoder->open(context->url.c_str());
 
-            while (context->status){
-               int code = context->decoder->read();
-               if (code == -2) { break; }
-               else if (code == 0) {
-                    context->tsfn.BlockingCall((void*)context, [](Napi::Env env, Napi::Function jsCallback, void *data){
-                        Worker *context = static_cast<Worker*>(data);
-                        jsCallback.Call({Napi::Buffer<uint8_t>::Copy(env, context->decoder->out_buffer, context->decoder->out_buffer_size)});
-                    });
-               }
+            if (context->decoder->open(context->url.c_str()) != -1) {
+				while (context->status){
+					int code = context->decoder->read();
+					
+					if (code == -2) { break; }
+					
+					else if (code == 0) {
+						context->tsfn.BlockingCall((void*)context, [](Napi::Env env, Napi::Function jsCallback, void *data){
+							Worker *context = static_cast<Worker*>(data);
+
+                            if (context != NULL && context->decoder != NULL) {
+                                jsCallback.Call({Napi::Buffer<uint8_t>::Copy(env, context->decoder->out_buffer, context->decoder->out_buffer_size)});
+                            }
+						});
+					}
+				}
             }
+
             context->decoder->close();
-            delete context->decoder;
+            context->decoder = NULL;
         }
+
+        printf("[Worker::exit]\n");
     }
 
 public:
     std::thread task;
-    std::mutex mtx;
     std::string url;
     std::atomic<bool> status = true;
-    Decoder *decoder;
+    Decoder *decoder = NULL;
     Napi::ThreadSafeFunction tsfn;
 };
 
@@ -197,16 +207,15 @@ public:
     }
     
     Wrapper(const Napi::CallbackInfo& info) : Napi::ObjectWrap<Wrapper>(info) {
-      Napi::Env env = info.Env();
-
     }
     
     ~Wrapper() {
-        if (context) { context->tsfn.Release(); }
+        if(context) { delete context; }
     }
     
     Napi::Value open(const Napi::CallbackInfo& info) {
        Napi::Env env = info.Env();
+       printf("[Napi::open]\n");
 
        if (info.Length() < 2) {
             return env.Null();
@@ -223,21 +232,24 @@ public:
                               "Worker",                 
                               0,        
                               1,       
-                              context, 
-                              [](Napi::Env env, void *finalizeData, Worker *context){
-                                    context->status = false;
-                                    context->task.join();
-                                    delete context;
+                              (void*)NULL, 
+                              [](Napi::Env env, void *finalizeData, void *data){
+                                    printf("[Napi::ThreadSafeFunctionEnd]\n");
                               },
-                              (void *)NULL); 
-       context->task = std::thread(Worker::run, context);               
+                              (void*)NULL); 
+       context->task = std::thread(Worker::run, context);         
        return env.Null();
     }
     
     Napi::Value close(const Napi::CallbackInfo& info) {
+        printf("[Napi::close]\n");
         Napi::Env env = info.Env();
+       
+        context->status = false;
+        context->task.join();
         context->tsfn.Release();
-        context = NULL;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
         return env.Null();
     }
 private:
