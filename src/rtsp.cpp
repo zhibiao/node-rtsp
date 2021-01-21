@@ -24,7 +24,7 @@ public:
         av_dict_set(&options, "buffer_size", "1024000", 0);
         av_dict_set(&options, "rtsp_transport", "tcp", 0);
         av_dict_set(&options, "analyzeduration", "1000000", 0);
-        av_dict_set(&options, "stimeout","10000000", 0);
+        av_dict_set(&options, "stimeout","1000000", 0);
         
         if (avformat_open_input(&format_ctx, url, NULL, &options) != 0) {
            printf("%s failed!\n", "avformat_open_input");
@@ -144,14 +144,14 @@ public:
     SwsContext *img_convert_ctx = NULL;
 };
 
-class Worker {
+class Context {
 public:
-    Worker(){}
+    Context(){}
     
-    ~Worker() {}
+    ~Context() {}
     
-    static void run(Worker *context) {
-        printf("[Worker::run]\n");
+    static void run(Context *context) {
+        printf("[Context::run]\n");
 
         while (context->status) {
             context->decoder = new Decoder();
@@ -164,9 +164,11 @@ public:
 					
 					else if (code == 0) {
 						context->tsfn.BlockingCall((void*)context, [](Napi::Env env, Napi::Function jsCallback, void *data){
-							Worker *context = static_cast<Worker*>(data);
+							Context *context = static_cast<Context*>(data);
 
-                            if (context != NULL && context->decoder != NULL) {
+                            if (context->status && 
+                                context->decoder != NULL) {
+
                                 jsCallback.Call({Napi::Buffer<uint8_t>::Copy(env, context->decoder->out_buffer, context->decoder->out_buffer_size)});
                             }
 						});
@@ -178,7 +180,7 @@ public:
             context->decoder = NULL;
         }
 
-        printf("[Worker::exit]\n");
+        printf("[Context::exit]\n");
     }
 
 public:
@@ -209,9 +211,7 @@ public:
     Wrapper(const Napi::CallbackInfo& info) : Napi::ObjectWrap<Wrapper>(info) {
     }
     
-    ~Wrapper() {
-        if(context) { delete context; }
-    }
+    ~Wrapper() {}
     
     Napi::Value open(const Napi::CallbackInfo& info) {
        Napi::Env env = info.Env();
@@ -225,19 +225,20 @@ public:
             return env.Null();
        }
    
-       context = new Worker();
+       context = new Context();
        context->url = info[0].As<Napi::String>().Utf8Value();
        context->tsfn = Napi::ThreadSafeFunction::New(env,                    
                               info[1].As<Napi::Function>(), 
-                              "Worker",                 
+                              "Context",                 
                               0,        
                               1,       
-                              (void*)NULL, 
-                              [](Napi::Env env, void *finalizeData, void *data){
+                              (void*)context, 
+                              [&](Napi::Env env, void *finalizeData, void *data){
                                     printf("[Napi::ThreadSafeFunctionEnd]\n");
+                                    delete static_cast<Context*>(data);
                               },
                               (void*)NULL); 
-       context->task = std::thread(Worker::run, context);         
+       context->task = std::thread(Context::run, context);         
        return env.Null();
     }
     
@@ -248,12 +249,12 @@ public:
         context->status = false;
         context->task.join();
         context->tsfn.Release();
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        context = NULL;
 
         return env.Null();
     }
 private:
-    Worker *context = NULL;
+    Context *context = NULL;
 };
 
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
